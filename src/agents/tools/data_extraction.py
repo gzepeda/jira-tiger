@@ -12,7 +12,7 @@ class JiraDataExtractionSchema(BaseModel):
     action: str = Field(description="Action to perform. Possible actions: ingest_board_overview")
     project_id: str = Field(default="", description="ID of the project to extract data from")
     labels: list = Field(default=[], description="Project labels to be filtered")
-
+    epics: list = Field(default=[], description="List of epics to filter issues by. If provided, labels will be ignored")
 class JiraDataExtraction(BaseTool):
     name: str = "Tools for extracting data from Jira"
     description: str = "Tools for extracting data from Jira"
@@ -21,14 +21,15 @@ class JiraDataExtraction(BaseTool):
     connection: JiraConnectionManager = Field(default_factory=JiraConnectionManager)
     project_id: str = Field(default="", description="ID of the project to extract data from")
     labels: str = Field(default="", description="Project labels to be filtered")
-
-    def _run(self, action:str, project_id: str, labels: list) -> str:
+    epics: list = Field(default=[], description="List of epics to filter issues by. If provided, labels will be ignored")
+    def _run(self, action:str, project_id: str, labels: list, epics: list) -> str:
         """
         Execute data extraction actions
         """
         self.connection = JiraConnectionManager()
         self.project_id = project_id
         self.labels = labels
+        self.epics = epics
         actions = {
                 "ingest_board_overview": lambda: self.ingest_board_overview(),
             }
@@ -44,8 +45,14 @@ class JiraDataExtraction(BaseTool):
         return self.__create_board_overview(parent_issues)
 
     def __get_issues_count(self):
-        """Get the total issues in the project with a given label"""
-        jql_query = ' AND '.join(f'labels = "{label}"' for label in self.labels)
+        """Get the total issues in the project filtered by epics (if provided), otherwise by labels"""
+        if hasattr(self, "epics") and self.epics:
+            # Si hay épicas, filtra por ellas
+            epics_query = " OR ".join([f'"Epic Link" = "{epic}"' for epic in self.epics])
+            jql_query = epics_query
+        else:
+            # Si no hay épicas, filtra por labels como antes
+            jql_query = ' AND '.join(f'labels = "{label}"' for label in self.labels)
 
         params = {
             "jql": jql_query,
@@ -67,15 +74,19 @@ class JiraDataExtraction(BaseTool):
 
 
     def __get_labeled_issues(self, start_at=0, max_results=50):
-        """Get issues with specified labels in a given project using JQL search"""
-        labels_query = " AND ".join([f'labels = "{label}"' for label in self.labels])
-        jql_query = f'project = {self.project_id} AND {labels_query}'
+        """Get issues with specified epics or labels in a given project using JQL search"""
+        if hasattr(self, "epics") and self.epics:
+            epics_query = " OR ".join([f'"Epic Link" = "{epic}"' for epic in self.epics])
+            jql_query = f'project = {self.project_id} AND ({epics_query})'
+        else:
+            labels_query = " AND ".join([f'labels = "{label}"' for label in self.labels])
+            jql_query = f'project = {self.project_id} AND {labels_query}' if labels_query else f'project = {self.project_id}'
 
         params = {
             "jql": jql_query,
             "startAt": start_at,
             "maxResults": max_results,
-            "fields": [ #Remove this in the first execution
+            "fields": [
                 "key",
                 "summary",
                 "status",
