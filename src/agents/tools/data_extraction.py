@@ -6,6 +6,7 @@ import pandas as pd
 import os
 from datetime import datetime
 from tqdm import tqdm
+import logging
 
 class JiraDataExtractionSchema(BaseModel):
     """Schema for JiraStorageTools inputs"""
@@ -13,6 +14,7 @@ class JiraDataExtractionSchema(BaseModel):
     project_id: str = Field(default="", description="ID of the project to extract data from")
     labels: list = Field(default=[], description="Project labels to be filtered")
     epics: list = Field(default=[], description="List of epics to filter issues by. If provided, labels will be ignored")
+
 class JiraDataExtraction(BaseTool):
     name: str = "Tools for extracting data from Jira"
     description: str = "Tools for extracting data from Jira"
@@ -46,19 +48,22 @@ class JiraDataExtraction(BaseTool):
 
     def __get_issues_count(self):
         """Get the total issues in the project filtered by epics (if provided), otherwise by labels"""
+        logger = logging.getLogger(__name__)
+
         if hasattr(self, "epics") and self.epics:
-            # Si hay épicas, filtra por ellas
             epics_query = " OR ".join([f'"Epic Link" = "{epic}"' for epic in self.epics])
             jql_query = epics_query
+            logger.info(f"Filtrando por épicas: {self.epics}")
         else:
-            # Si no hay épicas, filtra por labels como antes
             jql_query = ' AND '.join(f'labels = "{label}"' for label in self.labels)
+            logger.info(f"Filtrando por labels: {self.labels}")
 
         params = {
             "jql": jql_query,
             "startAt": 0,
             "maxResults": 0
         }
+        logger.debug(f"Parámetros de búsqueda: {params}")
 
         try:
             response = self.connection.make_request(
@@ -67,9 +72,13 @@ class JiraDataExtraction(BaseTool):
                 params=params
             )
             if not response or response.status_code != 200:
+                logger.error(f"Error en la respuesta de Jira: {getattr(response, 'status_code', None)}")
                 return None
-            return response.json()["total"]
-        except Exception:
+            total = response.json()["total"]
+            logger.info(f"Total de issues encontrados: {total}")
+            return total
+        except Exception as e:
+            logger.exception(f"Excepción al obtener issues: {e}")
             return None
 
 
